@@ -88,6 +88,268 @@ This means the backend can be scaled horizontally with no shared session store.
 
 ---
 
+## Example Flow
+
+A complete walkthrough of one prep session — from opening the app to reviewing flashcards.
+
+**Scenario:** Atharva is a mid-level SWE with a Google interview in 12 days. He wants to do a behavioral mock interview, then ask a follow-up question and save it as a flashcard.
+
+---
+
+### Step 1 — App launch: build the coaching brief
+
+When the session starts the app reads all local SwiftData silently (no user action needed) and calls `/memory/synthesize` once. The returned `context_summary` is cached and attached to every subsequent API call.
+
+**Request — `POST /memory/synthesize`**
+```json
+{
+  "user_profile": {
+    "name": "Atharva",
+    "role": "Software Engineer",
+    "level": "mid",
+    "target": "Google",
+    "interview_date": "2026-05-17"
+  },
+  "topic_scores": [
+    { "topic": "conflict resolution", "scores": [52, 61, 70] },
+    { "topic": "leadership",          "scores": [80, 83] },
+    { "topic": "system design",       "scores": [45, 48] }
+  ],
+  "episodic_memories": [
+    "Session 3 (behavioral): struggled to quantify impact in STAR answers. Feedback: add metrics.",
+    "Session 4 (system design): good high-level design, weak on capacity estimation."
+  ],
+  "faq_activity": [
+    { "topic": "STAR method",      "times_asked": 4, "avg_self_grade": 3.2 },
+    { "topic": "system design",    "times_asked": 2, "avg_self_grade": 2.5 }
+  ]
+}
+```
+
+**Response**
+```json
+{
+  "context_summary": "Atharva is a mid-level SWE targeting Google in 12 days. Priority: conflict resolution — scores improving (52→70) but still below 75; push for quantified impact in STAR answers. Leadership is a strength (avg 82) — use sparingly to build confidence. Avoid system design for now (avg 47, weak capacity estimation). Tone: direct and encouraging. Tip: he revisits STAR method FAQs frequently — prompt him to cite numbers when describing results."
+}
+```
+
+---
+
+### Step 2 — Start the interview
+
+The user selects **Behavioral** domain and taps Start. The cached `context_summary` goes in as `context`.
+
+**Request — `POST /interview/start`**
+```json
+{
+  "role": "Software Engineer",
+  "level": "mid",
+  "domain": "behavioral",
+  "context": "Atharva is a mid-level SWE targeting Google in 12 days. Priority: conflict resolution..."
+}
+```
+
+**Response**
+```json
+{
+  "question": "Tell me about a time you disagreed with a teammate's technical decision. How did you handle it, and what was the outcome?"
+}
+```
+
+---
+
+### Step 3 — Submit answer, receive scores + follow-up
+
+Atharva types his answer. The app appends it to `history`, computes `session_delta` locally, and posts to `/interview/answer`.
+
+**Request — `POST /interview/answer`**
+```json
+{
+  "role": "Software Engineer",
+  "level": "mid",
+  "domain": "behavioral",
+  "context": "Atharva is a mid-level SWE targeting Google in 12 days...",
+  "session_delta": "Q1 (conflict resolution): avg 68/100 — good structure, missing quantified outcome",
+  "history": [
+    {
+      "role": "interviewer",
+      "content": "Tell me about a time you disagreed with a teammate's technical decision. How did you handle it, and what was the outcome?"
+    },
+    {
+      "role": "candidate",
+      "content": "During a backend refactor, my teammate wanted to rewrite our auth service from scratch. I thought it was too risky given our deadline, so I put together a comparison doc showing the estimated time vs. risk of both approaches. We discussed it with the team lead and agreed on a smaller incremental migration. The refactor shipped on time and we avoided two weeks of potential rework."
+    }
+  ],
+  "answer": "During a backend refactor, my teammate wanted to rewrite our auth service from scratch..."
+}
+```
+
+**Response**
+```json
+{
+  "scores": {
+    "clarity": 82,
+    "correctness": 78,
+    "communication": 85,
+    "edge_cases": 60
+  },
+  "feedback": "Good STAR structure with a clear action and resolution. The outcome is mentioned but lacks numbers — how much time did the incremental approach actually save, and did you measure any post-launch stability? Adding a concrete metric here would make this answer significantly stronger at Google.",
+  "topic": "conflict resolution",
+  "next_question": "Describe a situation where you had to influence a decision without having direct authority. What approach did you take?"
+}
+```
+
+---
+
+### Step 4 — Wrap up: session summary
+
+After 4–5 questions Atharva taps End Session. The app sends all collected scores to `/interview/summarise`.
+
+**Request — `POST /interview/summarise`**
+```json
+{
+  "role": "Software Engineer",
+  "level": "mid",
+  "context": "Atharva is a mid-level SWE targeting Google in 12 days...",
+  "session_delta": "Q1 (conflict resolution): avg 76 — missing metrics\nQ2 (influence without authority): avg 81 — strong\nQ3 (failure): avg 69 — vague outcome\nQ4 (teamwork): avg 88 — best answer",
+  "scores": [
+    { "topic": "conflict resolution",       "clarity": 82, "correctness": 78, "communication": 85, "edge_cases": 60 },
+    { "topic": "influence without authority","clarity": 88, "correctness": 80, "communication": 84, "edge_cases": 72 },
+    { "topic": "failure & learning",         "clarity": 70, "correctness": 65, "communication": 74, "edge_cases": 60 },
+    { "topic": "teamwork",                  "clarity": 90, "correctness": 85, "communication": 92, "edge_cases": 78 }
+  ]
+}
+```
+
+**Response**
+```json
+{
+  "overall_score": 77,
+  "strong_areas": [
+    "Teamwork and collaboration",
+    "Influencing without authority"
+  ],
+  "weak_spots": [
+    "Quantifying outcomes with data",
+    "Describing failure with specific learnings"
+  ],
+  "summary": "Atharva shows strong interpersonal communication and a clear sense of narrative structure. The main gap is specificity — answers resolve positively but rarely include numbers, timelines, or measurable impact, which is a bar Google interviewers consistently hold.",
+  "next_focus": "Practice STAR answers where the Result includes at least one metric (time saved, error rate, revenue impact, etc.)"
+}
+```
+
+---
+
+### Step 5 — Follow-up question via FAQ
+
+After the session Atharva asks a question about something that came up.
+
+**Request — `POST /faq/ask`**
+```json
+{
+  "question": "How do I make my STAR answers more data-driven when I don't always have exact numbers?",
+  "topic": "STAR method",
+  "context": "Atharva is a mid-level SWE targeting Google in 12 days...",
+  "relevant_flashcards": [
+    {
+      "question": "What does STAR stand for?",
+      "answer": "Situation, Task, Action, Result.",
+      "topic": "STAR method"
+    }
+  ]
+}
+```
+
+**Response**
+```json
+{
+  "answer": "Even without exact metrics, you can use relative or estimated numbers: 'reduced deployment time by roughly 40%', 'the bug affected around 200 users per week', or 'we cut the review cycle from 3 days to same-day'. Ranges and approximations are acceptable — what matters is showing you think in terms of impact. Before your interview, spend 10 minutes writing one number next to each story you plan to use.",
+  "related_topics": [
+    "Quantifying engineering impact",
+    "Common behavioral interview mistakes",
+    "Google interview rubric"
+  ],
+  "save_as_flashcard": true
+}
+```
+
+The app sees `save_as_flashcard: true` and creates a new card locally in SwiftData. It enters the SM-2 queue with default ease factor 2.5 and first review due tomorrow.
+
+---
+
+### Step 6 — Generate flashcards from study notes
+
+Atharva pastes his notes on system design capacity estimation and generates cards.
+
+**Request — `POST /faq/generate`**
+```json
+{
+  "topic": "Capacity Estimation",
+  "notes": "QPS = queries per second. Start with DAU (daily active users). Assume 10% are active concurrently. Read:write ratio usually 100:1 for social apps. 1 server handles ~1000 QPS. Storage: 1 photo ≈ 300KB. 1 tweet ≈ 280 bytes. Latency targets: p99 < 200ms. Always consider CDN for static assets. Back-of-envelope: estimate then sanity check."
+}
+```
+
+**Response**
+```json
+{
+  "flashcards": [
+    {
+      "question": "How do you estimate QPS from DAU?",
+      "answer": "Multiply DAU by the fraction active concurrently (typically 10%), then divide by 86,400 seconds. Example: 10M DAU × 10% / 86,400 ≈ 116 QPS."
+    },
+    {
+      "question": "What is a typical read:write ratio for a social app?",
+      "answer": "Around 100:1 — reads heavily dominate. Design your caching and replication strategy around this asymmetry."
+    },
+    {
+      "question": "Roughly how much QPS can a single server handle?",
+      "answer": "A commodity web server handles ~1,000 QPS. Use this as the baseline when estimating how many servers you need."
+    },
+    {
+      "question": "What are common storage sizes to memorise for estimation?",
+      "answer": "1 photo ≈ 300 KB, 1 tweet/short text ≈ 280 bytes, 1 minute of HD video ≈ 100 MB. These let you quickly back-of-envelope storage totals."
+    },
+    {
+      "question": "What latency target is commonly expected at the p99 level?",
+      "answer": "p99 < 200 ms is a widely cited target. Anything above 500 ms at p99 usually signals a design problem worth calling out."
+    }
+  ],
+  "topic": "Capacity Estimation"
+}
+```
+
+All 5 cards are saved to SwiftData and scheduled for first review tomorrow.
+
+---
+
+### Full session at a glance
+
+```
+App launch
+  └─▶ MemoryBuilder reads SwiftData (local, no network)
+      └─▶ POST /memory/synthesize  ──▶  context_summary cached
+
+Start interview
+  └─▶ POST /interview/start        ──▶  opening question
+
+  [for each answer]
+  └─▶ POST /interview/answer       ──▶  scores + feedback + next question
+      └─▶ session_delta updated locally on iOS (no network call)
+
+End session
+  └─▶ POST /interview/summarise    ──▶  overall score, strong areas, weak spots
+      └─▶ EpisodicMemory saved to SwiftData
+
+Study mode
+  └─▶ POST /faq/ask                ──▶  answer + related topics
+      └─▶ if save_as_flashcard: card created in SwiftData
+
+  └─▶ POST /faq/generate           ──▶  5–15 flashcards from notes
+      └─▶ cards added to SwiftData, SM-2 queue starts
+```
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
